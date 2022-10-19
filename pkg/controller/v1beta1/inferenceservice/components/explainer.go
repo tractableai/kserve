@@ -108,10 +108,9 @@ func (e *Explainer) Reconcile(isvc *v1beta1.InferenceService) error {
 			return errors.Wrapf(err, "fails to set service owner reference for explainer")
 		}
 		//set autoscaler Controller
-		if r.Scaler.Autoscaler.AutoscalerClass == constants.AutoscalerClassHPA {
-			if err := controllerutil.SetControllerReference(isvc, r.Scaler.Autoscaler.HPA.HPA, e.scheme); err != nil {
-				return errors.Wrapf(err, "fails to set HPA owner reference for explainer")
-			}
+		//set autoscaler Controller
+		if err := r.Scaler.Autoscaler.SetControllerReferences(isvc, e.scheme); err != nil {
+			return errors.Wrapf(err, "fails to set autoscaler owner references for transformer")
 		}
 
 		deployment, err := r.Reconcile()

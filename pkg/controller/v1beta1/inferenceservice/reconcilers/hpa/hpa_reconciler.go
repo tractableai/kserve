@@ -27,12 +27,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var log = logf.Log.WithName("HPAReconciler")
 
-//HPAReconciler is the struct of Raw K8S Object
+// HPAReconciler is the struct of Raw K8S Object
 type HPAReconciler struct {
 	client       client.Client
 	scheme       *runtime.Scheme
@@ -109,7 +110,7 @@ func createHPA(componentMeta metav1.ObjectMeta,
 	return hpa
 }
 
-//checkHPAExist checks if the hpa exists?
+// checkHPAExist checks if the hpa exists?
 func (r *HPAReconciler) checkHPAExist(client client.Client) (constants.CheckResultType, *v2beta2.HorizontalPodAutoscaler, error) {
 	//get hpa
 	existingHPA := &v2beta2.HorizontalPodAutoscaler{}
@@ -137,30 +138,24 @@ func semanticHPAEquals(desired, existing *v2beta2.HorizontalPodAutoscaler) bool 
 		equality.Semantic.DeepEqual(*desired.Spec.MinReplicas, *existing.Spec.MinReplicas)
 }
 
-//Reconcile ...
-func (r *HPAReconciler) Reconcile() (*v2beta2.HorizontalPodAutoscaler, error) {
+// Reconcile ...
+func (r *HPAReconciler) Reconcile() error {
 	//reconcile Service
-	checkResult, existingHPA, err := r.checkHPAExist(r.client)
+	checkResult, _, err := r.checkHPAExist(r.client)
 	log.Info("service reconcile", "checkResult", checkResult, "err", err)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if checkResult == constants.CheckResultCreate {
-		err = r.client.Create(context.TODO(), r.HPA)
-		if err != nil {
-			return nil, err
-		} else {
-			return r.HPA, nil
-		}
+		return r.client.Create(context.TODO(), r.HPA)
 	} else if checkResult == constants.CheckResultUpdate { //CheckResultUpdate
-		err = r.client.Update(context.TODO(), r.HPA)
-		if err != nil {
-			return nil, err
-		} else {
-			return r.HPA, nil
-		}
+		return r.client.Update(context.TODO(), r.HPA)
 	} else {
-		return existingHPA, nil
+		return nil
 	}
+}
+
+func (r *HPAReconciler) SetControllerReferences(owner metav1.Object, scheme *runtime.Scheme) error {
+	return controllerutil.SetControllerReference(owner, r.HPA, scheme)
 }
