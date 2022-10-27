@@ -19,6 +19,7 @@ package deployment
 import (
 	"context"
 
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	"github.com/kserve/kserve/pkg/constants"
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,21 +30,22 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"knative.dev/pkg/kmp"
+	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var log = logf.Log.WithName("DeploymentReconciler")
 
-//DeploymentReconciler reconciles the raw kubernetes deployment resource
+// DeploymentReconciler reconciles the raw kubernetes deployment resource
 type DeploymentReconciler struct {
-	client       client.Client
+	client       kclient.Client
 	scheme       *runtime.Scheme
 	Deployment   *appsv1.Deployment
 	componentExt *v1beta1.ComponentExtensionSpec
 }
 
-func NewDeploymentReconciler(client client.Client,
+func NewDeploymentReconciler(client kclient.Client,
 	scheme *runtime.Scheme,
 	componentMeta metav1.ObjectMeta,
 	componentExt *v1beta1.ComponentExtensionSpec,
@@ -91,8 +93,8 @@ func createRawDeployment(componentMeta metav1.ObjectMeta,
 	return deployment
 }
 
-//checkDeploymentExist checks if the deployment exists?
-func (r *DeploymentReconciler) checkDeploymentExist(client client.Client) (constants.CheckResultType, *appsv1.Deployment, error) {
+// checkDeploymentExist checks if the deployment exists?
+func (r *DeploymentReconciler) checkDeploymentExist(client kclient.Client) (constants.CheckResultType, *appsv1.Deployment, error) {
 	//get deployment
 	existingDeployment := &appsv1.Deployment{}
 	err := client.Get(context.TODO(), types.NamespacedName{
@@ -106,10 +108,20 @@ func (r *DeploymentReconciler) checkDeploymentExist(client client.Client) (const
 		return constants.CheckResultUnknown, nil, err
 	}
 	//existed, check equivalence
-	if semanticDeploymentEquals(r.Deployment, existingDeployment) {
-		return constants.CheckResultExisted, existingDeployment, nil
+	//for HPA scaling, we should ignore Replicas of Deployment
+	ignoreFields := cmpopts.IgnoreFields(appsv1.DeploymentSpec{}, "Replicas")
+	// Do a dry-run update. This will populate our local deployment object with any default values
+	// that are present on the remote version.
+	if err := client.Update(context.TODO(), r.Deployment, kclient.DryRunAll); err != nil {
+		return constants.CheckResultUnknown, nil, err
 	}
-	return constants.CheckResultUpdate, existingDeployment, nil
+	if diff, err := kmp.SafeDiff(r.Deployment.Spec, existingDeployment.Spec, ignoreFields); err != nil {
+		return constants.CheckResultUnknown, nil, err
+	} else if diff != "" {
+		log.Info("Deployment Updated", "Diff", diff)
+		return constants.CheckResultUpdate, existingDeployment, nil
+	}
+	return constants.CheckResultExisted, existingDeployment, nil
 }
 
 func semanticDeploymentEquals(desired, existing *appsv1.Deployment) bool {
@@ -201,7 +213,7 @@ func setDefaultDeploymentSpec(spec *appsv1.DeploymentSpec) {
 	}
 }
 
-//Reconcile ...
+// Reconcile ...
 func (r *DeploymentReconciler) Reconcile() (*appsv1.Deployment, error) {
 	//reconcile Deployment
 	checkResult, deployment, err := r.checkDeploymentExist(r.client)
